@@ -3,37 +3,42 @@ set -e
 
 echo "=== Emby + rclone Startup Script ==="
 
-# --- 1. Write rclone config from environment variable ---
+# --- 1. Build rclone config from environment variables ---
 RCLONE_CONFIG_DIR="/root/.config/rclone"
 RCLONE_CONFIG_FILE="${RCLONE_CONFIG_DIR}/rclone.conf"
 
-if [ -z "$RCLONE_CONFIG_BASE64" ]; then
-    echo "ERROR: RCLONE_CONFIG_BASE64 environment variable is not set!"
-    echo "Set it to the base64-encoded contents of your rclone.conf file."
+if [ -z "$GDRIVE_TOKEN" ]; then
+    echo "ERROR: GDRIVE_TOKEN environment variable is not set!"
+    echo "Set it to the token JSON from your rclone config."
     exit 1
 fi
 
 mkdir -p "$RCLONE_CONFIG_DIR"
 
-# Decode the base64-encoded rclone config and strip Windows line endings
-echo "$RCLONE_CONFIG_BASE64" | base64 -d | tr -d '\r' > "$RCLONE_CONFIG_FILE"
+# Build rclone.conf from individual environment variables
+cat > "$RCLONE_CONFIG_FILE" << EOF
+[gdrive]
+type = drive
+client_id = ${GDRIVE_CLIENT_ID}
+client_secret = ${GDRIVE_CLIENT_SECRET}
+scope = drive
+token = ${GDRIVE_TOKEN}
+team_drive = 
+EOF
+
 echo "rclone config written to $RCLONE_CONFIG_FILE"
-echo "--- Config contents ---"
-cat "$RCLONE_CONFIG_FILE"
-echo "--- End config ---"
 
 # Tell rclone where to find its config file
 export RCLONE_CONFIG="$RCLONE_CONFIG_FILE"
 
 # --- 2. Mount Google Drive via rclone ---
 MOUNT_POINT="/mnt/gdrive"
-REMOTE_NAME="gdrive"   # Must match the remote name in your rclone.conf
 
 mkdir -p "$MOUNT_POINT"
 
-echo "Mounting rclone remote '${REMOTE_NAME}:' at ${MOUNT_POINT} ..."
+echo "Mounting rclone remote 'gdrive:' at ${MOUNT_POINT} ..."
 
-rclone mount "${REMOTE_NAME}:" "$MOUNT_POINT" \
+rclone mount "gdrive:" "$MOUNT_POINT" \
     --allow-other \
     --allow-non-empty \
     --vfs-cache-mode full \
