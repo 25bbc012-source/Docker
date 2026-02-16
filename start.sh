@@ -15,9 +15,12 @@ fi
 
 mkdir -p "$RCLONE_CONFIG_DIR"
 
-# Decode the base64-encoded rclone config
-echo "$RCLONE_CONFIG_BASE64" | base64 -d > "$RCLONE_CONFIG_FILE"
+# Decode the base64-encoded rclone config and strip Windows line endings
+echo "$RCLONE_CONFIG_BASE64" | base64 -d | tr -d '\r' > "$RCLONE_CONFIG_FILE"
 echo "rclone config written to $RCLONE_CONFIG_FILE"
+echo "--- Config contents ---"
+cat "$RCLONE_CONFIG_FILE"
+echo "--- End config ---"
 
 # Tell rclone where to find its config file
 export RCLONE_CONFIG="$RCLONE_CONFIG_FILE"
