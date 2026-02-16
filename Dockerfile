@@ -1,23 +1,30 @@
-# Use official Emby server as base image
-FROM emby/embyserver:latest
+# ---- Stage 1: Builder - download rclone and fuse3 from Debian ----
+FROM debian:bookworm-slim AS builder
 
-# Install rclone and required dependencies (Alpine uses apk)
-RUN apk add --no-cache \
-    bash \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     unzip \
     fuse3 \
     ca-certificates \
     && curl -O https://downloads.rclone.org/current/rclone-current-linux-amd64.zip \
     && unzip rclone-current-linux-amd64.zip \
-    && cp rclone-*-linux-amd64/rclone /usr/bin/ \
+    && cp rclone-*-linux-amd64/rclone /usr/bin/rclone \
     && chmod +x /usr/bin/rclone \
-    && rm -rf rclone-* \
-    && apk del unzip
+    && rm -rf rclone-*
+
+# ---- Stage 2: Final image ----
+FROM emby/embyserver:latest
+
+# Copy rclone binary from builder
+COPY --from=builder /usr/bin/rclone /usr/bin/rclone
+
+# Copy fuse3 binaries and libraries from builder
+COPY --from=builder /usr/bin/fusermount3 /usr/bin/fusermount3
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libfuse3.so* /usr/lib/
+RUN ln -sf /usr/bin/fusermount3 /usr/bin/fusermount
 
 # Allow non-root FUSE mounts
-RUN sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf 2>/dev/null || \
-    echo "user_allow_other" >> /etc/fuse.conf
+RUN echo "user_allow_other" >> /etc/fuse.conf
 
 # Create mount point for Google Drive
 RUN mkdir -p /mnt/gdrive
