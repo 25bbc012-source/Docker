@@ -6,11 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     fuse3 \
     ca-certificates \
-    && curl -L -O https://downloads.rclone.org/current/rclone-current-linux-amd64.zip \
-    && unzip rclone-current-linux-amd64.zip \
-    && cp rclone-*-linux-amd64/rclone /usr/bin/rclone \
-    && chmod +x /usr/bin/rclone \
-    && rm -rf rclone-*
+    && curl -fsSL https://rclone.org/install.sh | bash \
+    && rm -rf /var/lib/apt/lists/*
 
 # ---- Stage 2: Final image ----
 FROM emby/embyserver:latest
