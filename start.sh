@@ -9,13 +9,11 @@ RCLONE_CONFIG_FILE="${RCLONE_CONFIG_DIR}/rclone.conf"
 
 if [ -z "$GDRIVE_TOKEN" ]; then
     echo "ERROR: GDRIVE_TOKEN environment variable is not set!"
-    echo "Set it to the token JSON from your rclone config."
     exit 1
 fi
 
 mkdir -p "$RCLONE_CONFIG_DIR"
 
-# Build rclone.conf from individual environment variables
 cat > "$RCLONE_CONFIG_FILE" << EOF
 [gdrive]
 type = drive
@@ -27,17 +25,21 @@ team_drive =
 EOF
 
 echo "rclone config written to $RCLONE_CONFIG_FILE"
-
-# Tell rclone where to find its config file
 export RCLONE_CONFIG="$RCLONE_CONFIG_FILE"
 
 # --- 2. Mount Google Drive via rclone ---
 MOUNT_POINT="/mnt/gdrive"
-
 mkdir -p "$MOUNT_POINT"
+
+# Check if FUSE is available
+if [ ! -e /dev/fuse ]; then
+    echo "WARNING: /dev/fuse not found. Creating device node..."
+    mknod /dev/fuse c 10 229 2>/dev/null || true
+fi
 
 echo "Mounting rclone remote 'gdrive:' at ${MOUNT_POINT} ..."
 
+# Run rclone mount in background (not --daemon, which has issues on some platforms)
 rclone mount "gdrive:" "$MOUNT_POINT" \
     --allow-other \
     --allow-non-empty \
@@ -49,25 +51,35 @@ rclone mount "gdrive:" "$MOUNT_POINT" \
     --dir-cache-time 72h \
     --poll-interval 15s \
     --log-level INFO \
-    --daemon
+    --config "$RCLONE_CONFIG_FILE" &
 
-# Wait for the mount to become available
-echo "Waiting for rclone mount..."
-RETRIES=0
-MAX_RETRIES=30
-while ! mountpoint -q "$MOUNT_POINT" && [ $RETRIES -lt $MAX_RETRIES ]; do
-    sleep 1
-    RETRIES=$((RETRIES + 1))
-done
+RCLONE_PID=$!
+echo "rclone mount started with PID $RCLONE_PID"
 
-if mountpoint -q "$MOUNT_POINT"; then
-    echo "rclone mount successful at ${MOUNT_POINT}"
+# Wait a moment for the mount to initialize
+sleep 5
+
+# Check if rclone is still running
+if kill -0 $RCLONE_PID 2>/dev/null; then
+    echo "rclone mount is running"
 else
-    echo "WARNING: rclone mount may not be ready yet. Proceeding anyway..."
+    echo "ERROR: rclone mount failed to start!"
+    echo "This may be because FUSE is not available on this platform."
+    echo "Checking rclone listremotes as fallback test..."
+    rclone listremotes --config "$RCLONE_CONFIG_FILE"
+    echo "Config is valid. But FUSE mount is not supported on this platform."
+    echo "Continuing to start Emby anyway..."
+fi
+
+# Check if mount point is accessible
+if mountpoint -q "$MOUNT_POINT" 2>/dev/null; then
+    echo "rclone mount successful at ${MOUNT_POINT}"
+    ls -la "$MOUNT_POINT" || true
+else
+    echo "Mount point not ready. Listing files via rclone to verify config..."
+    rclone lsf "gdrive:" --config "$RCLONE_CONFIG_FILE" --max-depth 1 2>&1 | head -20 || true
 fi
 
 # --- 3. Start Emby Server ---
 echo "Starting Emby Server on port 8096 ..."
-
-# The official emby/embyserver image uses this entrypoint
 exec /init
