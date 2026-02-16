@@ -27,59 +27,129 @@ EOF
 echo "rclone config written to $RCLONE_CONFIG_FILE"
 export RCLONE_CONFIG="$RCLONE_CONFIG_FILE"
 
-# --- 2. Mount Google Drive via rclone ---
-MOUNT_POINT="/mnt/gdrive"
-mkdir -p "$MOUNT_POINT"
+# --- 2. Start rclone HTTP server (serves Google Drive files locally) ---
+RCLONE_PORT=9090
+STRM_DIR="/media/gdrive"
 
-# Check if FUSE is available
-if [ ! -e /dev/fuse ]; then
-    echo "WARNING: /dev/fuse not found. Creating device node..."
-    mknod /dev/fuse c 10 229 2>/dev/null || true
-fi
+echo "Starting rclone HTTP server on port ${RCLONE_PORT} ..."
 
-echo "Mounting rclone remote 'gdrive:' at ${MOUNT_POINT} ..."
-
-# Run rclone mount in background (not --daemon, which has issues on some platforms)
-rclone mount "gdrive:" "$MOUNT_POINT" \
-    --allow-other \
-    --allow-non-empty \
+rclone serve http "gdrive:" \
+    --addr "127.0.0.1:${RCLONE_PORT}" \
+    --read-only \
+    --buffer-size 64M \
     --vfs-cache-mode full \
     --vfs-cache-max-size 2G \
     --vfs-read-chunk-size 32M \
     --vfs-read-chunk-size-limit 256M \
-    --buffer-size 64M \
     --dir-cache-time 72h \
     --poll-interval 15s \
     --log-level INFO \
     --config "$RCLONE_CONFIG_FILE" &
 
 RCLONE_PID=$!
-echo "rclone mount started with PID $RCLONE_PID"
+echo "rclone HTTP server started with PID $RCLONE_PID"
 
-# Wait a moment for the mount to initialize
-sleep 5
+# Wait for rclone HTTP server to be ready
+echo "Waiting for rclone HTTP server..."
+RETRIES=0
+MAX_RETRIES=30
+while ! wget -q -O /dev/null "http://127.0.0.1:${RCLONE_PORT}/" 2>/dev/null; do
+    sleep 1
+    RETRIES=$((RETRIES + 1))
+    if [ $RETRIES -ge $MAX_RETRIES ]; then
+        echo "WARNING: rclone HTTP server may not be ready yet."
+        break
+    fi
+done
 
-# Check if rclone is still running
 if kill -0 $RCLONE_PID 2>/dev/null; then
-    echo "rclone mount is running"
+    echo "rclone HTTP server is running"
 else
-    echo "ERROR: rclone mount failed to start!"
-    echo "This may be because FUSE is not available on this platform."
-    echo "Checking rclone listremotes as fallback test..."
-    rclone listremotes --config "$RCLONE_CONFIG_FILE"
-    echo "Config is valid. But FUSE mount is not supported on this platform."
-    echo "Continuing to start Emby anyway..."
+    echo "ERROR: rclone HTTP server failed to start!"
+    exit 1
 fi
 
-# Check if mount point is accessible
-if mountpoint -q "$MOUNT_POINT" 2>/dev/null; then
-    echo "rclone mount successful at ${MOUNT_POINT}"
-    ls -la "$MOUNT_POINT" || true
-else
-    echo "Mount point not ready. Listing files via rclone to verify config..."
-    rclone lsf "gdrive:" --config "$RCLONE_CONFIG_FILE" --max-depth 1 2>&1 | head -20 || true
-fi
+# --- 3. Generate .strm files from Google Drive listing ---
+echo "Generating .strm files in ${STRM_DIR} ..."
+mkdir -p "$STRM_DIR"
 
-# --- 3. Start Emby Server ---
+generate_strm_files() {
+    local remote_path="$1"
+    local local_dir="$2"
+
+    # List files and directories at this path
+    rclone lsjson "gdrive:${remote_path}" --config "$RCLONE_CONFIG_FILE" 2>/dev/null | \
+    while IFS= read -r line; do
+        # Parse JSON manually using basic shell tools
+        name=$(echo "$line" | sed -n 's/.*"Name":"\([^"]*\)".*/\1/p' 2>/dev/null || true)
+        is_dir=$(echo "$line" | sed -n 's/.*"IsDir":\(true\|false\).*/\1/p' 2>/dev/null || true)
+
+        [ -z "$name" ] && continue
+
+        if [ "$is_dir" = "true" ]; then
+            # Create subdirectory and recurse
+            mkdir -p "${local_dir}/${name}"
+            generate_strm_files "${remote_path}${name}/" "${local_dir}/${name}"
+        else
+            # Check if it's a media file
+            ext=$(echo "$name" | sed 's/.*\.//' | tr '[:upper:]' '[:lower:]')
+            case "$ext" in
+                mkv|mp4|avi|mov|wmv|flv|webm|m4v|mpg|mpeg|ts|m2ts|3gp|ogv)
+                    # Create .strm file
+                    strm_name=$(echo "$name" | sed 's/\.[^.]*$//')
+                    encoded_path=$(echo "${remote_path}${name}" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g')
+                    echo "http://127.0.0.1:${RCLONE_PORT}/${encoded_path}" > "${local_dir}/${strm_name}.strm"
+                    echo "  Created: ${local_dir}/${strm_name}.strm"
+                    ;;
+                mp3|flac|aac|ogg|wma|wav|m4a|opus)
+                    strm_name=$(echo "$name" | sed 's/\.[^.]*$//')
+                    encoded_path=$(echo "${remote_path}${name}" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g')
+                    echo "http://127.0.0.1:${RCLONE_PORT}/${encoded_path}" > "${local_dir}/${strm_name}.strm"
+                    echo "  Created: ${local_dir}/${strm_name}.strm"
+                    ;;
+            esac
+        fi
+    done
+}
+
+# Use rclone lsf for simpler, more reliable file listing
+generate_strm_simple() {
+    echo "Scanning Google Drive for media files..."
+
+    # List all files recursively
+    rclone lsf "gdrive:" --recursive --config "$RCLONE_CONFIG_FILE" 2>/dev/null | while IFS= read -r filepath; do
+        # Check if it ends with / (directory)
+        case "$filepath" in
+            */) continue ;;
+        esac
+
+        # Check if it's a media file
+        ext=$(echo "$filepath" | sed 's/.*\.//' | tr '[:upper:]' '[:lower:]')
+        case "$ext" in
+            mkv|mp4|avi|mov|wmv|flv|webm|m4v|mpg|mpeg|ts|m2ts|3gp|ogv|mp3|flac|aac|ogg|wma|wav|m4a|opus)
+                # Get directory part and create it
+                dir_part=$(dirname "$filepath")
+                if [ "$dir_part" != "." ]; then
+                    mkdir -p "${STRM_DIR}/${dir_part}"
+                fi
+
+                # Create .strm file
+                strm_name=$(echo "$filepath" | sed 's/\.[^.]*$//')
+                encoded_path=$(echo "$filepath" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g')
+                echo "http://127.0.0.1:${RCLONE_PORT}/${encoded_path}" > "${STRM_DIR}/${strm_name}.strm"
+                echo "  STRM: ${strm_name}.strm"
+                ;;
+        esac
+    done
+
+    echo "STRM file generation complete!"
+    echo "Total .strm files: $(find "$STRM_DIR" -name '*.strm' 2>/dev/null | wc -l)"
+}
+
+generate_strm_simple
+
+# --- 4. Start Emby Server ---
 echo "Starting Emby Server on port 8096 ..."
+echo "Media STRM files are in: ${STRM_DIR}"
+echo "Add ${STRM_DIR} as your media library folder in Emby setup."
 exec /init
