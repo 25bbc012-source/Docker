@@ -1,36 +1,30 @@
-version: '3.8'
-services:
-  rclone:
-    image: rclone/rclone:latest
-    cap_add:
-      - SYS_ADMIN
-    security_opt:
-      - apparmor:unconfined
-    devices:
-      - /dev/fuse
-    volumes:
-      - media:/data:shared
-    command: >
-      mount gdrive: /data
-      --allow-other
-      --vfs-cache-mode writes
-      --vfs-cache-max-size 10G
-      --vfs-read-chunk-size 128M
-      --daemon
-    restart: unless-stopped
+FROM ubuntu:22.04
 
-  emby:
-    image: emby/embyserver:latest
-    user: 1000:1000
-    ports:
-      - 8096:8096
-    volumes:
-      - config:/config
-      - media:/data:ro
-    depends_on:
-      - rclone
-    restart: unless-stopped
+ENV DEBIAN_FRONTEND=noninteractive
 
-volumes:
-  config:
-  media:
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    fuse \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install rclone
+RUN curl https://rclone.org/install.sh | bash
+
+# Install Emby
+RUN curl -L https://github.com/MediaBrowser/Emby.Releases/releases/latest/download/emby-server-deb_4.8.0.80_amd64.deb -o emby.deb \
+    && apt-get update \
+    && apt-get install -y ./emby.deb \
+    && rm emby.deb
+
+# Create mount + config dirs
+RUN mkdir -p /data /config
+
+# Copy startup script
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
+
+EXPOSE 8096
+
+CMD ["/start.sh"]
