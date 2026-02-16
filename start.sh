@@ -7,8 +7,8 @@ echo "=== Emby + rclone Startup Script ==="
 RCLONE_CONFIG_DIR="/root/.config/rclone"
 RCLONE_CONFIG_FILE="${RCLONE_CONFIG_DIR}/rclone.conf"
 
-if [ -z "$RCLONE_CONFIG" ]; then
-    echo "ERROR: RCLONE_CONFIG environment variable is not set!"
+if [ -z "$RCLONE_CONFIG_BASE64" ]; then
+    echo "ERROR: RCLONE_CONFIG_BASE64 environment variable is not set!"
     echo "Set it to the base64-encoded contents of your rclone.conf file."
     exit 1
 fi
@@ -16,8 +16,11 @@ fi
 mkdir -p "$RCLONE_CONFIG_DIR"
 
 # Decode the base64-encoded rclone config
-echo "$RCLONE_CONFIG" | base64 -d > "$RCLONE_CONFIG_FILE"
+echo "$RCLONE_CONFIG_BASE64" | base64 -d > "$RCLONE_CONFIG_FILE"
 echo "rclone config written to $RCLONE_CONFIG_FILE"
+
+# Tell rclone where to find its config file
+export RCLONE_CONFIG="$RCLONE_CONFIG_FILE"
 
 # --- 2. Mount Google Drive via rclone ---
 MOUNT_POINT="/mnt/gdrive"
