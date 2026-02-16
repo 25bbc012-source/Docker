@@ -9,16 +9,18 @@ RUN apt-get update && apt-get install -y \
     unzip \
     gnupg \
     wget \
+    apt-transport-https \
+    software-properties-common \
     && rm -rf /var/lib/apt/lists/*
 
 # Install rclone
 RUN curl https://rclone.org/install.sh | bash
 
-# Install Emby
-RUN wget https://repo.emby.media/emby-server-deb_4.8.0.80_amd64.deb -O emby.deb \
+# Install Emby via official repo
+RUN wget -qO - https://repo.emby.media/emby.asc | gpg --dearmor -o /usr/share/keyrings/emby.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/emby.gpg] https://repo.emby.media/ubuntu jammy main" > /etc/apt/sources.list.d/emby.list \
     && apt-get update \
-    && apt-get install -y ./emby.deb \
-    && rm emby.deb
+    && apt-get install -y emby-server
 
 RUN mkdir -p /data /config
 
