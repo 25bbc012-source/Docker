@@ -38,7 +38,6 @@ rclone mount "${REMOTE_NAME}:" "$MOUNT_POINT" \
     --dir-cache-time 72h \
     --poll-interval 15s \
     --log-level INFO \
-    --log-file /var/log/rclone.log \
     --daemon
 
 # Wait for the mount to become available
