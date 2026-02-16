@@ -7,13 +7,15 @@ RUN apt-get update && apt-get install -y \
     fuse \
     ca-certificates \
     unzip \
+    gnupg \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 # Install rclone
 RUN curl https://rclone.org/install.sh | bash
 
 # Install Emby
-RUN curl -L https://github.com/MediaBrowser/Emby.Releases/releases/latest/download/emby-server-deb_4.8.0.80_amd64.deb -o emby.deb \
+RUN wget https://repo.emby.media/emby-server-deb_4.8.0.80_amd64.deb -O emby.deb \
     && apt-get update \
     && apt-get install -y ./emby.deb \
     && rm emby.deb
