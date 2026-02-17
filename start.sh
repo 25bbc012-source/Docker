@@ -73,44 +73,7 @@ fi
 echo "Generating .strm files in ${STRM_DIR} ..."
 mkdir -p "$STRM_DIR"
 
-generate_strm_files() {
-    local remote_path="$1"
-    local local_dir="$2"
 
-    # List files and directories at this path
-    rclone lsjson "gdrive:${remote_path}" --config "$RCLONE_CONFIG_FILE" 2>/dev/null | \
-    while IFS= read -r line; do
-        # Parse JSON manually using basic shell tools
-        name=$(echo "$line" | sed -n 's/.*"Name":"\([^"]*\)".*/\1/p' 2>/dev/null || true)
-        is_dir=$(echo "$line" | sed -n 's/.*"IsDir":\(true\|false\).*/\1/p' 2>/dev/null || true)
-
-        [ -z "$name" ] && continue
-
-        if [ "$is_dir" = "true" ]; then
-            # Create subdirectory and recurse
-            mkdir -p "${local_dir}/${name}"
-            generate_strm_files "${remote_path}${name}/" "${local_dir}/${name}"
-        else
-            # Check if it's a media file
-            ext=$(echo "$name" | sed 's/.*\.//' | tr '[:upper:]' '[:lower:]')
-            case "$ext" in
-                mkv|mp4|avi|mov|wmv|flv|webm|m4v|mpg|mpeg|ts|m2ts|3gp|ogv)
-                    # Create .strm file
-                    strm_name=$(echo "$name" | sed 's/\.[^.]*$//')
-                    encoded_path=$(echo "${remote_path}${name}" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g')
-                    echo "http://127.0.0.1:${RCLONE_PORT}/${encoded_path}" > "${local_dir}/${strm_name}.strm"
-                    echo "  Created: ${local_dir}/${strm_name}.strm"
-                    ;;
-                mp3|flac|aac|ogg|wma|wav|m4a|opus)
-                    strm_name=$(echo "$name" | sed 's/\.[^.]*$//')
-                    encoded_path=$(echo "${remote_path}${name}" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g')
-                    echo "http://127.0.0.1:${RCLONE_PORT}/${encoded_path}" > "${local_dir}/${strm_name}.strm"
-                    echo "  Created: ${local_dir}/${strm_name}.strm"
-                    ;;
-            esac
-        fi
-    done
-}
 
 # Use rclone lsf for simpler, more reliable file listing
 generate_strm_simple() {
@@ -146,9 +109,28 @@ generate_strm_simple() {
     echo "Total .strm files: $(find "$STRM_DIR" -name '*.strm' 2>/dev/null | wc -l)"
 }
 
-generate_strm_simple
+# Loop to generate .strm files every 10 minutes
+(
+    while true; do
+        generate_strm_simple
+        echo "Waiting 10 minutes before next scan..."
+        sleep 600
+    done
+) &
 
-# --- 4. Start Emby Server ---
+# --- 4. Keep-alive ping (prevents Render free tier from sleeping) ---
+PING_URL="https://docker-p5is.onrender.com"
+PING_INTERVAL=300  # every 5 minutes
+
+echo "Starting keep-alive pinger for ${PING_URL} every ${PING_INTERVAL}s ..."
+(
+    while true; do
+        sleep "$PING_INTERVAL"
+        wget -q -O /dev/null "$PING_URL" 2>/dev/null && echo "[keep-alive] pinged $PING_URL" || echo "[keep-alive] ping failed"
+    done
+) &
+
+# --- 5. Start Emby Server ---
 echo "Starting Emby Server on port 8096 ..."
 echo "Media STRM files are in: ${STRM_DIR}"
 echo "Add ${STRM_DIR} as your media library folder in Emby setup."
