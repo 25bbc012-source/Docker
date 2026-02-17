@@ -15,6 +15,9 @@ FROM emby/embyserver:latest
 # Copy rclone binary from builder
 COPY --from=builder /usr/bin/rclone /usr/bin/rclone
 
+# Copy CA certificates so wget/curl can reach HTTPS URLs
+COPY --from=builder /etc/ssl/certs /etc/ssl/certs
+
 # Copy fuse3 binaries and libraries from builder
 COPY --from=builder /usr/bin/fusermount3 /usr/bin/fusermount3
 COPY --from=builder /usr/lib/x86_64-linux-gnu/libfuse3.so* /usr/lib/
