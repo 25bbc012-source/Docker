@@ -120,13 +120,16 @@ generate_strm_simple() {
 
 # --- 4. Keep-alive ping (prevents Render free tier from sleeping) ---
 PING_URL="https://docker-p5is.onrender.com"
-PING_INTERVAL=300  # every 5 minutes
+PING_INTERVAL=240  # every 4 minutes
 
 echo "Starting keep-alive pinger for ${PING_URL} every ${PING_INTERVAL}s ..."
 (
+    sleep 60  # first ping after 1 minute
     while true; do
+        wget -q --no-check-certificate -O /dev/null "$PING_URL" 2>/dev/null \
+            && echo "[keep-alive] pinged $PING_URL OK" \
+            || echo "[keep-alive] ping FAILED - retrying in ${PING_INTERVAL}s"
         sleep "$PING_INTERVAL"
-        wget -q -O /dev/null "$PING_URL" 2>/dev/null && echo "[keep-alive] pinged $PING_URL" || echo "[keep-alive] ping failed"
     done
 ) &
 
